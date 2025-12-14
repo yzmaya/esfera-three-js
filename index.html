@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Control de Zoom 3D con Gestos de Mano (Puño/Abierta)</title>
+    <title>Control 3D Completo: Zoom, Color y Rotación</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #instructions {
@@ -41,15 +41,22 @@
         // --- 1. CONFIGURACIÓN DE THREE.JS Y VARIABLES DE CONTROL ---
 
         let scene, camera, renderer;
-        let particles, particleGeometry;
-        
+        let particles, particleGeometry, particleMaterial; 
         let initialPositions; 
         
-        // Constantes del sistema
+        // Variables para la rotación
+        let previousRotationPoint = null;
+        const ROTATION_FACTOR = 0.05; // Sensibilidad de la rotación
+
+        // Colores y Zooms (restantes del paso anterior)
+        const COLOR_RED = new THREE.Color(0xff0000); 
+        const COLOR_GREEN = new THREE.Color(0x00ff00); 
+        const COLOR_DEFAULT = new THREE.Color(0x00ffff); 
+
         const PARTICLE_COUNT = 30000; 
         const INITIAL_RADIUS = 15; 
         const MIN_RADIUS = 5;      
-        const MAX_RADIUS = 50;     // Aumentado el límite de expansión
+        const MAX_RADIUS = 50;     
 
         let targetRadius = INITIAL_RADIUS; 
         let currentRadius = INITIAL_RADIUS; 
@@ -66,9 +73,10 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Generación de puntos dentro de una esfera para distribución uniforme
+            // Generación de puntos dentro de una esfera
             particleGeometry = new THREE.BufferGeometry();
             const positions = new Float32Array(PARTICLE_COUNT * 3); 
+            // ... (código de generación de esfera omitido por brevedad, es el mismo) ...
 
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 let x, y, z;
@@ -86,8 +94,8 @@
             particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             initialPositions = new Float32Array(positions);
 
-            const particleMaterial = new THREE.PointsMaterial({
-                color: 0x00ffff,
+            particleMaterial = new THREE.PointsMaterial({
+                color: COLOR_DEFAULT,
                 size: 0.1,
                 sizeAttenuation: true,
                 blending: THREE.AdditiveBlending,
@@ -109,30 +117,28 @@
         function animate() {
             requestAnimationFrame(animate);
             updateParticles();
+            // La rotación se aplica aquí, justo antes del render
+            // Aplicamos un suavizado lento para que no se detenga bruscamente
+            particles.rotation.y *= 0.99; // Damping
             renderer.render(scene, camera);
         }
 
         function updateParticles() {
-            
-            // Suavizar el cambio de radio
+            // ... (código de escalado de partículas omitido, es el mismo) ...
             currentRadius += (targetRadius - currentRadius) * 0.1;
 
-            if (Math.abs(currentRadius - targetRadius) < 0.01) return; 
-
-            const positions = particleGeometry.attributes.position.array;
-            
-            // Aplicar el escalado
-            const scaleFactor = currentRadius / INITIAL_RADIUS;
-            
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const index = i * 3;
+            if (Math.abs(currentRadius - targetRadius) > 0.01) { 
+                const positions = particleGeometry.attributes.position.array;
+                const scaleFactor = currentRadius / INITIAL_RADIUS;
                 
-                positions[index]     = initialPositions[index] * scaleFactor;
-                positions[index + 1] = initialPositions[index + 1] * scaleFactor;
-                positions[index + 2] = initialPositions[index + 2] * scaleFactor;
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    const index = i * 3;
+                    positions[index]     = initialPositions[index] * scaleFactor;
+                    positions[index + 1] = initialPositions[index + 1] * scaleFactor;
+                    positions[index + 2] = initialPositions[index + 2] * scaleFactor;
+                }
+                particleGeometry.attributes.position.needsUpdate = true;
             }
-
-            particleGeometry.attributes.position.needsUpdate = true;
         }
 
 
@@ -141,17 +147,10 @@
         const videoElement = document.getElementById('video');
         const instructions = document.getElementById('instructions');
         
-        // El punto 0 es la base de la palma
         const PALM_BASE_LANDMARK = 0; 
-
-        // Puntas de los dedos (índice 8, medio 12, anular 16, meñique 20)
         const FINGERTIP_LANDMARKS = [8, 12, 16, 20]; 
-
-        // Si la distancia promedio de las puntas de los dedos a la base de la palma 
-        // es menor que este umbral (0.25 en coordenadas normalizadas), se considera puño cerrado.
         const CLOSED_FIST_THRESHOLD = 0.25; 
 
-        // Función auxiliar para la distancia entre dos hitos 3D (X, Y, Z)
         function calculateDistance3D(l1, l2) {
             return Math.sqrt(
                 Math.pow(l1.x - l2.x, 2) + 
@@ -167,41 +166,71 @@
         });
 
         hands.setOptions({
-            maxNumHands: 1,
+            maxNumHands: 2, // 🚨 ¡IMPORTANTE! Permitir dos manos
             modelComplexity: 1, 
             minDetectionConfidence: 0.7, 
             minTrackingConfidence: 0.7 
         });
 
         hands.onResults((results) => {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const numHands = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+            
+            if (numHands > 0) {
+                // Lógica de Zoom y Color (usando la primera mano detectada)
                 const landmarks = results.multiHandLandmarks[0];
                 const palmBase = landmarks[PALM_BASE_LANDMARK];
                 let totalDistance = 0;
 
-                // 1. Sumar la distancia de cada punta de dedo a la base de la palma
                 FINGERTIP_LANDMARKS.forEach(index => {
                     totalDistance += calculateDistance3D(palmBase, landmarks[index]);
                 });
                 
-                // 2. Calcular la distancia promedio
                 const averageDistance = totalDistance / FINGERTIP_LANDMARKS.length;
-                
-                // 3. Determinar el gesto
                 let isFistClosed = averageDistance < CLOSED_FIST_THRESHOLD;
                 
+                // Actualización de Radio y Color (misma lógica)
                 if (isFistClosed) {
-                    // Puño Cerrado (Contracción / Zoom Out)
                     targetRadius = Math.max(MIN_RADIUS, targetRadius - RADIUS_STEP);
-                    instructions.textContent = `✊ PUÑO CERRADO: Contracción (Radio: ${targetRadius.toFixed(1)})`;
+                    particleMaterial.color.copy(COLOR_RED);
+                    instructions.textContent = `✊ PUÑO CERRADO (ROJO): Contracción. ${numHands} mano(s) detectada(s).`;
                 } else {
-                    // Mano Abierta (Expansión / Zoom In)
                     targetRadius = Math.min(MAX_RADIUS, targetRadius + RADIUS_STEP);
-                    instructions.textContent = `🖐️ MANO ABIERTA: Expansión (Radio: ${targetRadius.toFixed(1)})`;
+                    particleMaterial.color.copy(COLOR_GREEN);
+                    instructions.textContent = `🖐️ MANO ABIERTA (VERDE): Expansión. ${numHands} mano(s) detectada(s).`;
+                }
+                
+                particleMaterial.needsUpdate = true;
+
+                // 🚨 Lógica de Rotación con Dos Manos
+                if (numHands === 2) {
+                    const hand1Center = results.multiHandLandmarks[0][PALM_BASE_LANDMARK];
+                    const hand2Center = results.multiHandLandmarks[1][PALM_BASE_LANDMARK];
+                    
+                    // Calculamos el punto de control central entre las dos palmas (eje X)
+                    const currentRotationPoint = (hand1Center.x + hand2Center.x) / 2;
+
+                    if (previousRotationPoint !== null) {
+                        // Delta (diferencia) en el eje X: > 0 girar a la derecha, < 0 girar a la izquierda
+                        const deltaX = currentRotationPoint - previousRotationPoint;
+                        
+                        // Aplicar rotación en el eje Y (vertical)
+                        particles.rotation.y += deltaX * ROTATION_FACTOR * 5; // Multiplicador de sensibilidad
+
+                        instructions.textContent = `🔄 DOBLE MANO: ROTANDO (Velocidad: ${(deltaX * 5).toFixed(2)}).`;
+                    }
+                    
+                    // Almacenar el punto actual para el siguiente fotograma
+                    previousRotationPoint = currentRotationPoint;
+                } else {
+                    // Si solo hay una mano, reiniciamos el rastreo de rotación
+                    previousRotationPoint = null;
                 }
 
+
             } else {
-                // Si no hay manos, el radio objetivo se mantiene o vuelve lentamente al inicial
+                // Sin manos detectadas
+                
+                // Vuelve el radio a la posición inicial
                 if (targetRadius !== INITIAL_RADIUS) {
                     if (targetRadius > INITIAL_RADIUS) {
                         targetRadius = Math.max(INITIAL_RADIUS, targetRadius - 0.2);
@@ -209,7 +238,12 @@
                         targetRadius = Math.min(INITIAL_RADIUS, targetRadius + 0.2);
                     }
                 }
-                instructions.textContent = 'Mueve tu mano frente a la cámara (bien iluminada) para comenzar.';
+                
+                particleMaterial.color.copy(COLOR_DEFAULT);
+                particleMaterial.needsUpdate = true;
+                previousRotationPoint = null;
+                
+                instructions.textContent = 'Mueve tu mano(s) frente a la cámara (bien iluminada) para comenzar.';
             }
         });
 
@@ -229,7 +263,7 @@
             animate();
             
             cameraUtils.start().then(() => {
-                instructions.textContent = 'Cámara iniciada. Mueve tu mano para comenzar.';
+                instructions.textContent = 'Cámara iniciada. Coloca dos manos y muévelas horizontalmente.';
             }).catch(error => {
                 instructions.textContent = 'ERROR: No se pudo acceder a la cámara. Revisa permisos.';
                 console.error("Error al iniciar la cámara:", error);
